@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>똥 피하기 게임 (Dodge the Poop)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        h1 {
+            margin-bottom: 10px;
+            font-size: 28px;
+            color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        #game-container {
+            position: relative;
+            width: 400px;
+            height: 600px;
+            background: linear-gradient(to bottom, #2c3e50, #000000);
+            border: 4px solid #444;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+        }
+        #game-over-screen {
+            display: none;
+        }
+        .btn {
+            margin-top: 20px;
+            padding: 12px 28px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 65, 108, 0.4);
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(255, 65, 108, 0.6);
+        }
+        .btn:active {
+            transform: scale(0.98);
+        }
+        .instructions {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #ccc;
+            text-align: center;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>💩 똥 피하기 게임</h1>
+
+    <div id="game-container">
+        <div id="ui-layer">
+            <div id="score">점수: 0</div>
+            <div id="high-score">최고 기록: 0</div>
+        </div>
+
+        <div id="start-screen">
+            <h2 style="font-size: 32px; margin-bottom: 10px;">💩 똥 피하기</h2>
+            <p class="instructions">좌우 화살표 키(← / →)를 눌러<br>떨어지는 똥을 피하세요!</p>
+            <button class="btn" onclick="startGame()">게임 시작</button>
+        </div>
+
+        <div id="game-over-screen">
+            <h2 style="font-size: 36px; color: #ff4757; margin-bottom: 10px;">GAME OVER</h2>
+            <p id="final-score" style="font-size: 20px; margin-bottom: 5px;">최종 점수: 0</p>
+            <button class="btn" onclick="startGame()">다시 하기</button>
+        </div>
+
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('high-score');
+        const finalScoreEl = document.getElementById('final-score');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+
+        let score = 0;
+        let highScore = localStorage.getItem('poop_dodge_highscore') || 0;
+        highScoreEl.textContent = `최고 기록: ${highScore}`;
+
+        let gameInterval;
+        let isRunning = false;
+
+        // Player
+        const player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 50,
+            width: 40,
+            height: 40,
+            speed: 7,
+            dx: 0
+        };
+
+        // Poops
+        let poops = [];
+        let poopSpawnRate = 20; // Lower is faster
+        let frameCount = 0;
+
+        // Controls
+        const keys = {
+            left: false,
+            right: false
+        };
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+        });
+
+        function createPoop() {
+            const size = Math.random() * 20 + 25; // 25 ~ 45
+            poops.push({
+                x: Math.random() * (canvas.width - size),
+                y: -size,
+                size: size,
+                speed: Math.random() * 3 + 4 + (score / 100) // Gradually speeds up
+            });
+        }
+
+        function drawPlayer() {
+            ctx.font = '36px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🏃', player.x + player.width / 2, player.y + player.height / 2);
+        }
+
+        function drawPoops() {
+            ctx.font = '30px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            poops.forEach(p => {
+                ctx.fillText('💩', p.x + p.size / 2, p.y + p.size / 2);
+            });
+        }
+
+        function updatePlayer() {
+            if (keys.left && player.x > 0) {
+                player.x -= player.speed;
+            }
+            if (keys.right && player.x < canvas.width - player.width) {
+                player.x += player.speed;
+            }
+        }
+
+        function updatePoops() {
+            for (let i = 0; i < poops.length; i++) {
+                let p = poops[i];
+                p.y += p.speed;
+
+                // Collision Detection
+                if (
+                    player.x < p.x + p.size &&
+                    player.x + player.width > p.x &&
+                    player.y < p.y + p.size &&
+                    player.y + player.height > p.y
+                ) {
+                    gameOver();
+                    return;
+                }
+
+                // Remove off-screen poops & increase score
+                if (p.y > canvas.height) {
+                    poops.splice(i, 1);
+                    i--;
+                    score += 10;
+                    scoreEl.textContent = `점수: ${score}`;
+                }
+            }
+        }
+
+        function gameLoop() {
+            if (!isRunning) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            frameCount++;
+            if (frameCount % Math.max(5, poopSpawnRate - Math.floor(score / 200)) === 0) {
+                createPoop();
+            }
+
+            updatePlayer();
+            updatePoops();
+
+            drawPlayer();
+            drawPoops();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            score = 0;
+            poops = [];
+            frameCount = 0;
+            player.x = canvas.width / 2 - 20;
+            scoreEl.textContent = `점수: 0`;
+            
+            startScreen.style.display = 'none';
+            gameOverScreen.style.display = 'none';
+            
+            isRunning = true;
+            gameLoop();
+        }
+
+        function gameOver() {
+            isRunning = false;
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('poop_dodge_highscore', highScore);
+                highScoreEl.textContent = `최고 기록: ${highScore}`;
+            }
+            finalScoreEl.textContent = `최종 점수: ${score}`;
+            gameOverScreen.style.display = 'flex';
+        }
+    </script>
+</body>
+</html>
